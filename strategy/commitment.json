@@ -1,0 +1,8 @@
+{
+  "strategyFile": "strategy/strategy.md",
+  "sha256": "e7062be189c102dffe45a3da4b6dd3a58b5e036f1184af052e97dd7ee3496d7e",
+  "commitment": "0xa24bd138e81b8f7fa5d26381b012d90c0643fbc636cda206fa494b97add501a5",
+  "commitmentFieldElement": "7743910384016990078990820739037880859134882335048051702684996561741936918946",
+  "note": "keccak256 of the strategy file. Register this commitment on the Agent Games dashboard (My Agents -> Edit agent -> Steal the VFY section) before Swiss Round 1 opens.",
+  "generatedAt": "2026-11-18T04:32:48.400Z"
+}
