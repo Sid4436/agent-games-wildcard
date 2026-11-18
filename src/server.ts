@@ -6,7 +6,10 @@
  *   POST /agent   -> signed task endpoint (preflight, gatekeeper, steal-the-vfy)
  *
  * Protocol rules enforced here (https://agentgames.zkverify.io/build):
- * - HMAC is verified against the RAW body BEFORE parsing JSON.
+ * - HMAC is verified against the RAW body BEFORE task envelopes are acted
+ *   on. The preflight handshake is the exception: it carries no task, so it
+ *   is answered (signed when the platform secret is configured) without
+ *   requiring a request signature.
  * - Every response is signed with x-agent-games-signature over the raw body.
  * - 60s hard deadline: if the work cannot finish before deadline_at, the
  *   agent fails closed (REJECT / HOLD) instead of timing out.
@@ -313,12 +316,50 @@ export function createAgentServer(
         res.end(JSON.stringify({ status: "ok" }));
         return;
       }
+      if (req.method === "GET" && req.url === "/agent") {
+        // Preflight handshake: the platform probes the endpoint (GET) before
+        // accepting it. Answer signed protocol-v1 JSON (signed when the
+        // platform secret is configured; the platform requires a signature).
+        send(res, 200, { ok: true, protocolVersion: "v1" });
+        if (!config.hmacSecret) {
+          log("WARNING: preflight served unsigned (no AGENT_GAMES_HMAC_SECRET) — the platform requires a signed response");
+        }
+        return;
+      }
       if (req.method !== "POST" || req.url !== "/agent") {
         res.writeHead(404, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "not found" }));
         return;
       }
       const rawBody = await readRawBody(req);
+      // Lenient preflight: the platform may probe with an empty body, {},
+      // {"type":"preflight"}, or the full "agent-games.preflight.v1"
+      // envelope. Answer those with signed protocol-v1 JSON without
+      // requiring a request signature (the handshake carries no task;
+      // authenticity is proven by the signed response).
+      let envelope: Record<string, any>;
+      try {
+        envelope = rawBody.length === 0 ? {} : JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid JSON" }));
+        return;
+      }
+      const envelopeType =
+        typeof envelope.type === "string" ? envelope.type : "";
+      if (
+        Object.keys(envelope).length === 0 ||
+        envelopeType === "preflight" ||
+        envelopeType === "agent-games.preflight.v1" ||
+        envelopeType.toLowerCase().includes("preflight")
+      ) {
+        log(`preflight from ${envelope.agent_id ?? "unknown agent"}`);
+        send(res, 200, { ok: true, protocolVersion: "v1" });
+        if (!config.hmacSecret) {
+          log("WARNING: preflight served unsigned (no AGENT_GAMES_HMAC_SECRET) — the platform requires a signed response");
+        }
+        return;
+      }
       const signature = req.headers["x-agent-games-signature"] as string | undefined;
       if (config.hmacSecret) {
         if (!verifySignature(config.hmacSecret, rawBody, signature)) {
@@ -329,19 +370,6 @@ export function createAgentServer(
         }
       } else {
         log("WARNING: running in DEMO mode (no AGENT_GAMES_HMAC_SECRET) — HMAC verification skipped");
-      }
-      let envelope: Record<string, any>;
-      try {
-        envelope = JSON.parse(rawBody.toString("utf8"));
-      } catch {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid JSON" }));
-        return;
-      }
-      if (envelope.type === "agent-games.preflight.v1") {
-        log(`preflight from ${envelope.agent_id ?? "unknown agent"}`);
-        send(res, 200, { ok: true, protocolVersion: "v1" });
-        return;
       }
       if (envelope.type === "agent-games.proof-gatekeeper.v1") {
         await handleGatekeeper(envelope, res);

@@ -103,6 +103,31 @@ test("preflight succeeds and the response is signed (live mode)", async () => {
   });
 });
 
+test("GET /agent answers the preflight handshake, signed (live mode)", async () => {
+  await withServer({ hmacSecret: SECRET }, async (base) => {
+    const res = await fetch(`${base}/agent`);
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.deepEqual(json, { ok: true, protocolVersion: "v1" });
+    const sig = res.headers.get("x-agent-games-signature");
+    assert.ok(sig, "response must carry x-agent-games-signature");
+    assert.equal(sig, signBody(SECRET, JSON.stringify(json)));
+  });
+});
+
+test("POST /agent with empty body or generic preflight answers preflight (live mode)", async () => {
+  await withServer({ hmacSecret: SECRET }, async (base) => {
+    const empty = await fetch(`${base}/agent`, { method: "POST", headers: { "content-type": "application/json" }, body: "" });
+    assert.equal(empty.status, 200);
+    assert.deepEqual(await empty.json(), { ok: true, protocolVersion: "v1" });
+    assert.ok(empty.headers.get("x-agent-games-signature"), "empty-body preflight must be signed");
+    const generic = await postAgent(base, { type: "preflight" }, SECRET);
+    assert.equal(generic.status, 200);
+    assert.deepEqual(generic.json, { ok: true, protocolVersion: "v1" });
+    assert.ok(generic.headers.get("x-agent-games-signature"), "generic preflight must be signed");
+  });
+});
+
 test("unsigned request is rejected in live mode", async () => {
   await withServer({ hmacSecret: SECRET }, async (base) => {
     const { status, json } = await postAgent(base, gatekeeperEnvelope());
